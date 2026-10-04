@@ -521,6 +521,7 @@ function pivotOf(list) {
 // ---------- Keyboard ----------
 document.addEventListener('keydown', (e) => {
   if (!$('previewModal').hidden) { if (e.key === 'Escape') closePreview(); return; }
+  if (!$('libModal').hidden) { if (e.key === 'Escape') closeLibrary(); return; }
   if (e.target.matches?.('input, select, textarea') || e.metaKey || e.ctrlKey) return;
   const k = e.key;
   if (k === ' ') {
@@ -702,9 +703,9 @@ async function findDb() {
   throw new Error('Realtime Database not found. Create it in the Firebase console (see README).');
 }
 
-async function cloud(method, path, body) {
+async function cloud(method, path, body, query) {
   const base = await findDb();
-  const url = `${base}/${CLOUD_ROOT}/${path.map(encodeURIComponent).join('/')}.json`;
+  const url = `${base}/${CLOUD_ROOT}/${path.map(encodeURIComponent).join('/')}.json${query ? '?' + query : ''}`;
   let r;
   try {
     r = await fetch(url, { method, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -1121,6 +1122,243 @@ $('previewAdd').onclick = async () => {
   closePreview();
   $('linkIn').value = '';
   await addSheet(f, { page });
+};
+
+// ---------- Library: sheets published as GitHub release assets ----------
+// Sources come from library-config.js plus any added in the app (localStorage).
+// The asset list comes from the GitHub API (CORS-enabled, cached 1 h); files download through server.py.
+const LIB_SOURCES_KEY = 'ovl:libSources';
+const lib = { items: [], sourceIdx: 0, selected: new Set(), cloudKeys: new Set(), cache: new Map(), previewName: null, error: null };
+
+function libSources() {
+  return [...(window.LIBRARY_SOURCES || []).map((s) => ({ ...s, builtin: true })), ...(readJSON(LIB_SOURCES_KEY) || [])];
+}
+
+function parseRelease(url) {
+  const m = String(url).match(/github\.com\/([^/]+)\/([^/]+)\/releases\/tag\/([^/?#]+)/);
+  return m && { owner: m[1], repo: m[2], tag: decodeURIComponent(m[3]) };
+}
+
+const prettyName = (n) => n.replace(/\.[^.]+$/, '').replace(/[_.]+/g, ' ').trim();
+const mb = (bytes) => (bytes / 1048576).toFixed(1) + ' MB';
+const isOpen = (name) => sheets.some((sh) => sh.name === name);
+
+function openLibrary() {
+  const sel = $('libSource');
+  sel.innerHTML = '';
+  libSources().forEach((s, i) => sel.add(new Option(s.label, i)));
+  lib.sourceIdx = Math.min(lib.sourceIdx, Math.max(0, libSources().length - 1));
+  sel.value = lib.sourceIdx;
+  $('libModal').hidden = false;
+  $('libFilter').focus();
+  loadLibrary(false);
+}
+function closeLibrary() { $('libModal').hidden = true; }
+$('libOpenBtn').onclick = openLibrary;
+$('libClose').onclick = closeLibrary;
+$('libModal').onclick = (e) => { if (e.target === $('libModal')) closeLibrary(); };
+$('libSource').onchange = (e) => { lib.sourceIdx = Number(e.target.value); lib.selected.clear(); loadLibrary(false); };
+$('libRefresh').onclick = () => loadLibrary(true);
+$('libFilter').oninput = () => renderLibList();
+
+async function loadLibrary(force) {
+  const src = libSources()[lib.sourceIdx];
+  $('libRemoveSource').hidden = !src || src.builtin;
+  lib.items = []; lib.error = null;
+  if (!src) { lib.error = 'No sources. Use ＋ Source to add a GitHub release link.'; return renderLibList(); }
+  const rel = parseRelease(src.release);
+  if (!rel) { lib.error = `Not a GitHub release link: ${src.release}`; return renderLibList(); }
+
+  const cacheKey = 'ovl:lib:' + src.release;
+  const cached = readJSON(cacheKey);
+  if (!force && cached && Date.now() - cached.at < 3600e3) {
+    lib.items = cached.items;
+  } else {
+    $('libInfo').textContent = 'Loading list from GitHub…';
+    renderLibList(true);
+    try {
+      const r = await fetch(`https://api.github.com/repos/${rel.owner}/${rel.repo}/releases/tags/${encodeURIComponent(rel.tag)}`);
+      if (!r.ok) {
+        throw new Error(r.status === 404 ? 'Release not found (is the repo public?)'
+          : r.status === 403 ? 'GitHub rate limit reached; try again in a while' : `GitHub error ${r.status}`);
+      }
+      const d = await r.json();
+      lib.items = d.assets
+        .filter((a) => /\.(pdf|png|jpe?g|gif|webp)$/i.test(a.name))
+        .map((a) => ({ name: a.name, size: a.size, url: a.browser_download_url }))
+        .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+      writeJSON(cacheKey, { at: Date.now(), items: lib.items });
+    } catch (err) {
+      lib.error = err.message;
+      if (cached) lib.items = cached.items; // stale list is better than none
+    }
+  }
+  renderLibList();
+  // Mark files that already have cloud alignments
+  try {
+    lib.cloudKeys = new Set(Object.keys((await cloud('GET', ['sheets'], undefined, 'shallow=true')) || {}));
+    renderLibList();
+  } catch {}
+}
+
+function renderLibList(loading) {
+  const ul = $('libList');
+  ul.innerHTML = '';
+  const note = (text, cls = 'note') => { const li = document.createElement('li'); li.className = 'lib-row ' + cls; li.textContent = text; ul.append(li); };
+  if (lib.error) note(lib.error, 'err');
+  if (loading) return note('Loading…');
+  const q = $('libFilter').value.trim().toLowerCase();
+  const shown = lib.items.filter((it) => !q || it.name.toLowerCase().includes(q) || prettyName(it.name).toLowerCase().includes(q));
+  for (const it of shown) {
+    const open = isOpen(it.name);
+    const li = document.createElement('li');
+    li.className = 'lib-row' + (it.name === lib.previewName ? ' current' : '');
+    li.title = it.name;
+    li.innerHTML = `<input type="checkbox" ${open ? 'disabled title="Already on the map"' : ''} ${lib.selected.has(it.name) ? 'checked' : ''}>
+      <span class="nm"></span>
+      ${lib.cloudKeys.has(fbKey(it.name)) ? '<span class="badge cl" title="Has saved cloud alignments">☁ aligned</span>' : ''}
+      ${open ? '<span class="badge on">✓ on map</span>' : ''}
+      <span class="sz">${mb(it.size)}</span>`;
+    li.querySelector('.nm').textContent = prettyName(it.name);
+    const cb = li.querySelector('input');
+    cb.onclick = (e) => {
+      e.stopPropagation();
+      cb.checked ? lib.selected.add(it.name) : lib.selected.delete(it.name);
+      updateLibFoot();
+    };
+    li.onclick = () => libPreview(it);
+    ul.append(li);
+  }
+  if (!lib.items.length && !lib.error) note('No PDFs or images in this release.');
+  else if (lib.items.length && !shown.length) note('No sheets match the filter.');
+  updateLibFoot();
+}
+
+function updateLibFoot() {
+  for (const n of [...lib.selected]) if (isOpen(n)) lib.selected.delete(n);
+  const total = lib.items.reduce((a, it) => a + it.size, 0);
+  const onMap = lib.items.filter((it) => isOpen(it.name)).length;
+  $('libInfo').textContent = lib.items.length ? `${lib.items.length} sheets · ${mb(total)} · ${onMap} on map` : '';
+  $('libAddSel').disabled = !lib.selected.size;
+  $('libAddSel').textContent = `＋ Add selected${lib.selected.size ? ` (${lib.selected.size})` : ''}`;
+}
+
+// Download through server.py (GitHub downloads have no CORS headers), with progress; keeps the last few in memory
+async function libFile(it, onProgress) {
+  if (lib.cache.has(it.name)) return lib.cache.get(it.name);
+  const r = await fetch('/api/fetch?url=' + encodeURIComponent(it.url));
+  if (r.status === 404 && !r.headers.get('X-Filename')) throw new Error('needs server.py running (python3 server.py)');
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
+  const total = Number(r.headers.get('Content-Length')) || it.size;
+  const reader = r.body.getReader();
+  const chunks = [];
+  let got = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    got += value.length;
+    onProgress?.(got, total);
+  }
+  const blob = new Blob(chunks);
+  const type = await sniffType(blob, it.name, '') || 'application/octet-stream';
+  const file = new File([blob], it.name, { type });
+  lib.cache.set(it.name, file);
+  while (lib.cache.size > 4) lib.cache.delete(lib.cache.keys().next().value);
+  return file;
+}
+
+async function libPreview(it) {
+  lib.previewName = it.name;
+  renderLibList();
+  const pv = $('libPreview');
+  const open = isOpen(it.name);
+  pv.innerHTML = `<div class="pv-title"></div>
+    <div class="muted small pv-info">${mb(it.size)}</div>
+    <div class="pv-img"><span class="muted pv-progress">Downloading…</span></div>
+    <div class="btns">
+      <button class="pv-open" ${open ? '' : 'hidden'}>Show on map</button>
+      <button class="primary pv-add" ${open ? 'hidden' : ''} disabled>＋ Add to map</button>
+    </div>`;
+  pv.querySelector('.pv-title').textContent = it.name;
+  pv.querySelector('.pv-open').onclick = () => {
+    const sh = sheets.find((s) => s.name === it.name);
+    if (sh) { setActive(sh.id); if (sh.anchor) map.panTo(sh.anchor); }
+    closeLibrary();
+  };
+  pv.querySelector('.pv-add').onclick = () => addFromLibrary([it]);
+  try {
+    const file = await libFile(it, (got, total) => {
+      if (lib.previewName === it.name) pv.querySelector('.pv-progress').textContent = `Downloading… ${Math.round((got / total) * 100)}%`;
+    });
+    if (lib.previewName !== it.name) return;
+    if (isPdfFile(file)) {
+      const pdf = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+      const page = await pdf.getPage(1);
+      const vp1 = page.getViewport({ scale: 1 });
+      const vp = page.getViewport({ scale: 1200 / Math.max(vp1.width, vp1.height) });
+      const c = document.createElement('canvas');
+      c.width = vp.width; c.height = vp.height;
+      await page.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
+      pv.querySelector('.pv-info').textContent = `PDF · ${pdf.numPages} page(s) · ${mb(it.size)}`;
+      pdf.destroy();
+      if (lib.previewName === it.name) pv.querySelector('.pv-img').replaceChildren(c);
+    } else {
+      const img = new Image();
+      img.src = URL.createObjectURL(file);
+      await img.decode();
+      if (lib.previewName !== it.name) return URL.revokeObjectURL(img.src);
+      pv.querySelector('.pv-info').textContent = `Image · ${img.naturalWidth}×${img.naturalHeight}px · ${mb(it.size)}`;
+      pv.querySelector('.pv-img').replaceChildren(img);
+      setTimeout(() => URL.revokeObjectURL(img.src), 1000);
+    }
+    pv.querySelector('.pv-add').disabled = false;
+  } catch (err) {
+    if (lib.previewName === it.name) pv.querySelector('.pv-img').innerHTML = `<span class="muted">Download failed: ${err.message}</span>`;
+  }
+}
+
+async function addFromLibrary(items) {
+  const todo = items.filter((it) => !isOpen(it.name));
+  closeLibrary();
+  for (let i = 0; i < todo.length; i++) {
+    const it = todo[i];
+    try {
+      const file = await libFile(it, (got, total) =>
+        status(`Downloading ${i + 1}/${todo.length}: ${prettyName(it.name)} ${Math.round((got / total) * 100)}%`));
+      status(`Adding ${i + 1}/${todo.length}: ${prettyName(it.name)}`);
+      await addSheet(file);
+    } catch (err) {
+      status(`Failed: ${it.name}: ${err.message}`);
+    }
+    lib.selected.delete(it.name);
+  }
+}
+$('libAddSel').onclick = () => addFromLibrary(lib.items.filter((it) => lib.selected.has(it.name)));
+
+$('libAddSource').onclick = () => {
+  const url = prompt('Paste a GitHub release link (…/releases/tag/…):');
+  if (!url) return;
+  const rel = parseRelease(url);
+  if (!rel) return alert('That is not a GitHub release link. It should look like https://github.com/owner/repo/releases/tag/name');
+  const label = prompt('Name for this source:', `${rel.repo} / ${rel.tag}`);
+  if (label === null) return;
+  const list = readJSON(LIB_SOURCES_KEY) || [];
+  list.push({ label: label.trim() || rel.tag, release: url.trim() });
+  writeJSON(LIB_SOURCES_KEY, list);
+  lib.sourceIdx = libSources().length - 1;
+  openLibrary();
+};
+
+$('libRemoveSource').onclick = () => {
+  const src = libSources()[lib.sourceIdx];
+  if (!src || src.builtin || !confirm(`Remove source "${src.label}"?`)) return;
+  const builtinCount = (window.LIBRARY_SOURCES || []).length;
+  const list = readJSON(LIB_SOURCES_KEY) || [];
+  list.splice(lib.sourceIdx - builtinCount, 1);
+  writeJSON(LIB_SOURCES_KEY, list);
+  lib.sourceIdx = 0;
+  openLibrary();
 };
 
 // ---------- Workspace: remembers open sheets across page reloads ----------

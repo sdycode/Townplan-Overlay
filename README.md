@@ -18,9 +18,10 @@ Open http://localhost:8000
 6. Each sheet's alignment saves itself in the browser per file and page, and open sheets come back after a page reload. **Export JSON** / **Import JSON** save and load all sheets' alignments as a local file.
 7. **☁ Saved alignments** (under Selected) stores named alignments in Firebase. A sheet can have many, and the ★ one is primary: it loads automatically whenever that file and page is added. ▶ applies one, ✎ renames, and 🗑 deletes, but the last one always stays. **Update current** overwrites the highlighted one.
 8. **☁ Collections** saves all open sheets with a copy of their alignments under one name. **Load** opens them; any files that aren't open yet are asked for once. **Update** overwrites the collection with the open sheets.
-9. **Add from a link:** paste a direct PDF or image link next to 👁, check the preview (choose the page, edit the name), then **Add to map**. Needs `server.py`.
-10. Paste a place name, coordinates (e.g. `18°37'21.8"N 73°47'39.0"E`) or any Google Maps link into the search box. Short `maps.app.goo.gl` links need `server.py`.
-11. Press `G` to show or hide the land-use legend.
+9. **📚 Library** lists every PDF and image in the library's GitHub releases. Filter by name, click a sheet to preview it, then **Add to map**, or tick several and use **Add selected**. Badges show which sheets are already on the map and which have saved cloud alignments. Sources are set in `library-config.js`; more can be added from the app with **＋ Source** (any public GitHub release link). Needs `server.py`.
+10. **Add from a link:** paste a direct PDF or image link next to 👁, check the preview (choose the page, edit the name), then **Add to map**. Needs `server.py`.
+11. Paste a place name, coordinates (e.g. `18°37'21.8"N 73°47'39.0"E`) or any Google Maps link into the search box. Short `maps.app.goo.gl` links need `server.py`.
+12. Press `G` to show or hide the land-use legend.
 
 ## Firebase setup (one time)
 Sheets are identified by **file name + page**; only alignment data is stored, never the files.

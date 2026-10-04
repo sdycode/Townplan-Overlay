@@ -146,3 +146,35 @@ button.mini { padding: 0 6px; font-size: 12px; line-height: 18px; }
 #previewThumb > * { display: block; max-width: 100%; max-height: 50vh; }
 button.primary { background: #1d6fe0; color: #fff; border-color: #1d6fe0; font-weight: 600; }
 button.primary:hover { background: #185fc0; }
+
+/* Library */
+.add-row { display: flex; gap: 6px; }
+.add-row .file-btn { flex: 1; }
+.lib-btn { font-weight: 600; white-space: nowrap; }
+.lib-box { width: min(1100px, 100%); height: min(85vh, 900px); display: flex; flex-direction: column; gap: 8px; }
+.lib-head { display: flex; align-items: center; gap: 6px; }
+.lib-head strong { margin-right: auto; white-space: nowrap; }
+.lib-head select { width: auto; max-width: 300px; min-width: 0; }
+#libFilter { width: 100%; padding: 6px 8px; border: 1px solid #ccc; border-radius: 6px; font: inherit; }
+.lib-body { flex: 1; min-height: 0; display: flex; gap: 10px; }
+#libList { list-style: none; margin: 0; padding: 0; width: 42%; overflow: auto; border: 1px solid #e5e5e5; border-radius: 6px; }
+.lib-row { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-bottom: 1px solid #f0f0f0; cursor: pointer; font-size: 12px; }
+.lib-row:hover { background: #f5f8ff; }
+.lib-row.current { background: #eaf2ff; }
+.lib-row .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-row .sz { color: #888; white-space: nowrap; }
+.lib-row.note { color: #888; cursor: default; }
+.lib-row.err { color: #c62828; cursor: default; }
+.badge { font-size: 10.5px; padding: 0 5px; border-radius: 8px; white-space: nowrap; }
+.badge.on { background: #e3f5ea; color: #1a7f45; }
+.badge.cl { background: #fff4d6; color: #9a6b00; }
+#libPreview { flex: 1; min-width: 0; overflow: auto; border: 1px solid #e5e5e5; border-radius: 6px; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+#libPreview .pv-img { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; background: #f3f3f3; border-radius: 6px; overflow: hidden; }
+#libPreview .pv-img img { max-width: 100%; max-height: 100%; object-fit: contain; }
+#libPreview .pv-title { font-weight: 600; word-break: break-all; }
+.lib-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+@media (max-width: 700px) {
+  .lib-body { flex-direction: column; }
+  #libList { width: 100%; height: 40%; }
+}
+button.primary:disabled { opacity: .45; cursor: default; }

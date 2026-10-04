@@ -25,6 +25,27 @@
       </div>
     </div>
   </div>
+  <div id="libModal" class="modal" hidden>
+    <div class="modal-box lib-box">
+      <div class="lib-head">
+        <strong>📚 Sheet library</strong>
+        <select id="libSource"></select>
+        <button id="libRefresh" class="mini" title="Reload the list from GitHub">⟳</button>
+        <button id="libAddSource" class="mini" title="Add a GitHub release link as a source">＋ Source</button>
+        <button id="libRemoveSource" class="mini" title="Remove this source" hidden>🗑</button>
+        <button id="libClose" class="mini" title="Close (Esc)">✕</button>
+      </div>
+      <input type="search" id="libFilter" placeholder="Filter by name, e.g. chikhali or 12" autocomplete="off">
+      <div class="lib-body">
+        <ul id="libList"></ul>
+        <div id="libPreview"><div class="muted">Click a sheet to preview it.</div></div>
+      </div>
+      <div class="lib-foot">
+        <span id="libInfo" class="muted small"></span>
+        <button id="libAddSel" class="primary" disabled>＋ Add selected</button>
+      </div>
+    </div>
+  </div>
   <div id="legend" hidden>
     <button id="legendClose" title="Hide legend (G)">×</button>
     <img src="assets/legend_areatype_colors.png" alt="Proposed land use legend">
@@ -61,10 +82,13 @@
 
       <section>
         <div class="sec-title">Sheets <span id="sheetCount" class="muted"></span></div>
-        <label class="file-btn">
-          <input type="file" id="fileInput" accept="application/pdf,image/*" multiple>
-          <span>＋ Add PDF / images</span>
-        </label>
+        <div class="add-row">
+          <label class="file-btn">
+            <input type="file" id="fileInput" accept="application/pdf,image/*" multiple>
+            <span>＋ Add files</span>
+          </label>
+          <button id="libOpenBtn" class="lib-btn" title="Browse sheets uploaded to the library">📚 Library</button>
+        </div>
         <form id="linkForm" class="search link-form">
           <input type="url" id="linkIn" placeholder="…or paste a PDF / image link" autocomplete="off">
           <button type="submit" title="Preview">👁</button>
@@ -172,6 +196,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script src="firebase-config.js"></script>
+  <script src="library-config.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
