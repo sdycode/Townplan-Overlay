@@ -107,6 +107,14 @@ class Handler(SimpleHTTPRequestHandler):
             return self.proxy_file(url)
         return super().do_GET()
 
+    def end_headers(self):
+        # Mark API replies and allow them from any page (e.g. index.html opened as a file)
+        if self.path.startswith("/api/"):
+            self.send_header("X-Overlay-Server", "1")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Expose-Headers", "X-Filename, X-Overlay-Server, Content-Length")
+        super().end_headers()
+
     def send_json(self, code, body):
         data = json.dumps(body).encode()
         self.send_response(code)

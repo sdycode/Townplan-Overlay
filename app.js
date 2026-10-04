@@ -1028,6 +1028,23 @@ $('collFilesInput').onchange = async (e) => {
     + (unused.length ? `Not in the collection: ${unused.map((f) => f.name).join(', ')}` : ''));
 };
 
+// ---------- server.py API ----------
+// Tries the page's own origin first, then the default server.py address, so downloads also work
+// when the page is opened as a file or from another dev server. server.py marks its replies with X-Overlay-Server.
+const SERVER_FALLBACK = 'http://localhost:8000';
+let apiBase = null;
+async function apiFetch(path) {
+  const bases = apiBase !== null ? [apiBase]
+    : [...new Set([...(location.protocol.startsWith('http') ? [''] : []), SERVER_FALLBACK])];
+  for (const base of bases) {
+    let r;
+    try { r = await fetch(base + path); } catch { continue; }
+    if (r.headers.get('X-Overlay-Server')) { apiBase = base; return r; }
+  }
+  apiBase = null;
+  throw new Error("can't reach server.py. Start it with: python3 server.py, then open http://localhost:8000");
+}
+
 // ---------- Add from link (downloaded through server.py, previewed before adding) ----------
 let preview = null; // { file, pdf, isPdf }
 
@@ -1050,8 +1067,7 @@ $('linkForm').onsubmit = async (e) => {
   if (!/^https?:\/\//i.test(url)) return status('Paste a link starting with http:// or https://');
   status('Downloading…');
   try {
-    const r = await fetch('/api/fetch?url=' + encodeURIComponent(url));
-    if (r.status === 404 && !r.headers.get('X-Filename')) throw new Error('needs server.py running (python3 server.py)');
+    const r = await apiFetch('/api/fetch?url=' + encodeURIComponent(url));
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
     let name = decodeURIComponent(r.headers.get('X-Filename') || 'download');
     const blob = await r.blob();
@@ -1246,8 +1262,7 @@ function updateLibFoot() {
 // Download through server.py (GitHub downloads have no CORS headers), with progress; keeps the last few in memory
 async function libFile(it, onProgress) {
   if (lib.cache.has(it.name)) return lib.cache.get(it.name);
-  const r = await fetch('/api/fetch?url=' + encodeURIComponent(it.url));
-  if (r.status === 404 && !r.headers.get('X-Filename')) throw new Error('needs server.py running (python3 server.py)');
+  const r = await apiFetch('/api/fetch?url=' + encodeURIComponent(it.url));
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
   const total = Number(r.headers.get('Content-Length')) || it.size;
   const reader = r.body.getReader();
@@ -1477,7 +1492,7 @@ async function searchPlace(q) {
 
 async function resolveLink(link) {
   try {
-    const r = await (await fetch('/api/resolve?url=' + encodeURIComponent(link))).json();
+    const r = await (await apiFetch('/api/resolve?url=' + encodeURIComponent(link))).json();
     if (r.lat != null) return goTo(r.lat, r.lng, r.name, r.zoom ?? undefined);
     if (r.name) return searchPlace(r.name);
     return status(r.error || 'No location found in link');
@@ -1527,6 +1542,10 @@ $('collapseBtn').onclick = () => {
   const c = $('panel').classList.toggle('collapsed');
   $('collapseBtn').textContent = c ? '+' : '–';
 };
+
+if (location.protocol === 'file:') {
+  $('fileBanner').hidden = false;
+}
 
 setMode('locked');
 renderList();
