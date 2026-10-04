@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Map Overlay Aligner</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="map"></div>
+  <div id="modeBadge"></div>
+  <div id="previewModal" class="modal" hidden>
+    <div class="modal-box">
+      <div class="sec-title">Preview</div>
+      <div id="previewThumb"></div>
+      <div id="previewInfo" class="muted small"></div>
+      <label id="previewPageRow">Page <select id="previewPage"></select></label>
+      <label>Name (the sheet's identity for saved alignments)
+        <input type="text" id="previewName">
+      </label>
+      <div class="btns">
+        <button id="previewCancel">Cancel</button>
+        <button id="previewAdd" class="primary">＋ Add to map</button>
+      </div>
+    </div>
+  </div>
+  <div id="legend" hidden>
+    <button id="legendClose" title="Hide legend (G)">×</button>
+    <img src="assets/legend_areatype_colors.png" alt="Proposed land use legend">
+  </div>
+
+  <aside id="panel">
+    <header>
+      <strong>Overlay Aligner</strong>
+      <button id="collapseBtn" title="Collapse panel">–</button>
+    </header>
+
+    <div class="body">
+      <section>
+        <form id="searchForm" class="search">
+          <input type="text" id="searchIn" placeholder="Place, coordinates or Google Maps link" autocomplete="off">
+          <button type="submit" title="Go">🔍</button>
+        </form>
+        <ul id="searchResults" hidden></ul>
+      </section>
+
+      <section class="grid">
+        <label>Base map <select id="baseSel"></select></label>
+        <label>Map zoom <input type="number" id="mapZoomIn" step="0.1"></label>
+      </section>
+
+      <section>
+        <div class="seg seg3">
+          <button data-mode="locked" title="Pan/zoom moves map and all sheets together (L)">🔒 Locked</button>
+          <button data-mode="adjust" title="Mouse moves only the selected sheet (A)">📄 Adjust</button>
+          <button data-mode="maponly" title="Mouse moves only the map; sheets stay still">🗺 Map only</button>
+        </div>
+        <div id="modeHelp" class="muted small"></div>
+      </section>
+
+      <section>
+        <div class="sec-title">Sheets <span id="sheetCount" class="muted"></span></div>
+        <label class="file-btn">
+          <input type="file" id="fileInput" accept="application/pdf,image/*" multiple>
+          <span>＋ Add PDF / images</span>
+        </label>
+        <form id="linkForm" class="search link-form">
+          <input type="url" id="linkIn" placeholder="…or paste a PDF / image link" autocomplete="off">
+          <button type="submit" title="Preview">👁</button>
+        </form>
+        <ul id="sheetList"></ul>
+        <div id="allControls" hidden>
+          <label>All sheets opacity <span id="masterVal">100%</span>
+            <input type="range" id="masterRange" min="0" max="100" value="100">
+          </label>
+          <label class="check"><input type="checkbox" id="allVisChk" checked> Show sheets <kbd>Shift+H</kbd></label>
+          <label class="check"><input type="checkbox" id="adjustAllChk"> Adjust all sheets together <kbd>T</kbd></label>
+          <label>PDF quality
+            <select id="qualitySel">
+              <option value="2500">Low (less memory)</option>
+              <option value="4000" selected>Medium</option>
+              <option value="7000">High (sharp, more memory)</option>
+            </select>
+          </label>
+        </div>
+      </section>
+
+      <section id="sheetProps" hidden>
+        <div class="sec-title">Selected: <span id="propName"></span></div>
+        <label id="pageRow">Page <select id="pageSel"></select></label>
+        <label>Opacity <span id="opVal">60%</span>
+          <input type="range" id="opRange" min="0" max="100" value="60">
+        </label>
+        <label class="check"><input type="checkbox" id="blendChk"> Hide white (multiply)</label>
+        <div class="grid">
+          <label>Scale %<input type="number" id="ovlScaleIn" step="0.1"></label>
+          <label>Rotation °<input type="number" id="rotIn" step="0.1"></label>
+          <label>Stretch X %<input type="number" id="sxIn" step="0.1" value="100"></label>
+          <label>Stretch Y %<input type="number" id="syIn" step="0.1" value="100"></label>
+        </div>
+        <div class="btns">
+          <button id="fitBtn">Fit to view <kbd>F</kbd></button>
+          <button id="resetBtn">↺ Reset sheet</button>
+        </div>
+        <div class="sub-title">☁ Saved alignments <button id="cloudRefreshBtn" class="mini" title="Refresh">⟳</button></div>
+        <ul id="alignList" class="cloud-list"></ul>
+        <div class="btns">
+          <button id="cloudSaveNewBtn" title="Save the current position as a new cloud alignment">☁ Save as new</button>
+          <button id="cloudUpdateBtn" title="Overwrite the highlighted cloud alignment with the current position">☁ Update current</button>
+        </div>
+      </section>
+
+      <section>
+        <div class="sec-title">☁ Collections <button id="collRefreshBtn" class="mini" title="Refresh">⟳</button></div>
+        <select id="collSel"></select>
+        <div class="btns">
+          <button id="collLoadBtn" title="Open this collection's sheets with their saved alignments">📥 Load</button>
+          <button id="collNewBtn" title="Save all open sheets as a new collection">＋ Save as new</button>
+          <button id="collUpdateBtn" title="Overwrite this collection with the open sheets">💾 Update</button>
+          <button id="collRenameBtn">✎ Rename</button>
+          <button id="collDeleteBtn">🗑 Delete</button>
+        </div>
+        <div id="collMissing" hidden>
+          <div class="small">Pick these files to finish loading: <span id="collMissingList"></span></div>
+          <label class="file-btn small-btn">
+            <input type="file" id="collFilesInput" accept="application/pdf,image/*" multiple>
+            <span>📂 Pick missing files</span>
+          </label>
+        </div>
+      </section>
+
+      <section>
+        <label class="check"><input type="checkbox" id="legendChk"> Show land-use legend <kbd>G</kbd></label>
+        <div class="btns">
+          <button id="saveBtn" title="Export all open sheets' alignments to a JSON file">💾 Export JSON</button>
+          <label class="file-btn small-btn" title="Apply alignments from a JSON file">
+            <input type="file" id="loadInput" accept="application/json,.json">
+            <span>📂 Import JSON</span>
+          </label>
+        </div>
+        <details id="cloudDetails">
+          <summary>☁ Cloud: <span id="cloudStatus">checking…</span></summary>
+          <label>Realtime Database URL (blank = auto)
+            <input type="url" id="dbUrlIn" placeholder="https://…firebaseio.com">
+          </label>
+          <div id="cloudHelp" class="small muted"></div>
+        </details>
+      </section>
+
+      <details>
+        <summary>Shortcuts</summary>
+        <ul class="small">
+          <li><kbd>L</kbd> Locked · <kbd>A</kbd> Adjust · <kbd>M</kbd> switch between them</li>
+          <li>Adjust: hold <kbd>Space</kbd> to pan/zoom map + sheets</li>
+          <li>Adjust: drag to move, scroll to scale, click a sheet to select it</li>
+          <li><kbd>Shift</kbd>+Scroll: rotate · <kbd>Alt</kbd>+Scroll: fine</li>
+          <li>Arrows: nudge 1px (<kbd>Shift</kbd> = 10px)</li>
+          <li><kbd>Q</kbd>/<kbd>E</kbd>: rotate 0.1° (<kbd>Shift</kbd> = 1°)</li>
+          <li><kbd>-</kbd>/<kbd>=</kbd>: scale 0.2% (<kbd>Shift</kbd> = 2%)</li>
+          <li><kbd>[</kbd>/<kbd>]</kbd>: select previous/next sheet</li>
+          <li><kbd>T</kbd>: adjust all sheets together on/off</li>
+          <li><kbd>H</kbd>: hide selected · <kbd>Shift+H</kbd>: hide all</li>
+          <li><kbd>1</kbd>–<kbd>9</kbd>, <kbd>0</kbd>: all sheets opacity 10–100%</li>
+        </ul>
+      </details>
+
+      <div id="status" class="muted small"></div>
+    </div>
+  </aside>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="firebase-config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
