@@ -755,6 +755,9 @@ async function initCloud() {
   try {
     await findDb();
     await refreshCollections();
+    if (!sheets.length && defaultCollId) {
+      await loadCollectionById(defaultCollId, { promptClose: false });
+    }
   } catch (err) {
     setCloudStatus(false, err.message);
     renderCollections();
@@ -903,16 +906,29 @@ async function cloudDelete(sh, id, a) {
 }
 
 // --- Collections: a named snapshot of open sheets and their alignments ---
+let defaultCollId = null;
 let collections = {};
 let pendingColl = null; // { order: Map(itemKey -> order), items: [missing items] }
 
 const itemKey = (name, page) => `${fbKey(name)}_p${page}`;
 
 async function refreshCollections(selectId) {
-  try { collections = (await cloud('GET', ['collections'])) || {}; } catch (err) { status(err.message); }
+  try {
+    collections = (await cloud('GET', ['collections'])) || {};
+    defaultCollId = await cloud('GET', ['defaultCollectionId']).catch(() => null);
+  } catch (err) {
+    status(err.message);
+  }
   renderCollections(selectId);
 }
 $('collRefreshBtn').onclick = () => refreshCollections();
+$('collSel').onchange = () => {
+  if ($('collDefaultBtn')) {
+    const isCurDef = $('collSel').value && $('collSel').value === defaultCollId;
+    $('collDefaultBtn').textContent = isCurDef ? '★ Default (active)' : '★ Set default';
+    $('collDefaultBtn').title = isCurDef ? 'Click to clear default' : 'Set this collection as default for all visitors';
+  }
+};
 
 function renderCollections(selectId) {
   const sel = $('collSel');
@@ -920,12 +936,20 @@ function renderCollections(selectId) {
   sel.innerHTML = '';
   const list = Object.entries(collections).sort((a, b) => (b[1].updatedAt || 0) - (a[1].updatedAt || 0));
   for (const [id, c] of list) {
-    sel.add(new Option(`${c.name || 'Untitled'} (${Object.keys(c.items || {}).length} sheets)`, id));
+    const isDef = id === defaultCollId;
+    sel.add(new Option(`${isDef ? '★ ' : ''}${c.name || 'Untitled'} (${Object.keys(c.items || {}).length} sheets)${isDef ? ' (default)' : ''}`, id));
   }
   if (!list.length) sel.add(new Option('No collections yet', ''));
   if (prev && collections[prev]) sel.value = prev;
   const has = !!sel.value;
-  for (const id of ['collLoadBtn', 'collUpdateBtn', 'collRenameBtn', 'collDeleteBtn']) $(id).disabled = !has;
+  for (const id of ['collLoadBtn', 'collUpdateBtn', 'collRenameBtn', 'collDeleteBtn', 'collDefaultBtn']) {
+    if ($(id)) $(id).disabled = !has;
+  }
+  if ($('collDefaultBtn')) {
+    const isCurDef = sel.value && sel.value === defaultCollId;
+    $('collDefaultBtn').textContent = isCurDef ? '★ Default (active)' : '★ Set default';
+    $('collDefaultBtn').title = isCurDef ? 'Click to clear default' : 'Set this collection as default for all visitors';
+  }
 }
 
 function snapshotItems() {
@@ -970,20 +994,24 @@ $('collRenameBtn').onclick = collAction(async () => {
 $('collDeleteBtn').onclick = collAction(async () => {
   const id = $('collSel').value;
   if (!id || !confirm(`Delete collection "${collections[id].name}"? Sheets' own saved alignments are kept.`)) return;
+  if (defaultCollId === id) {
+    await cloud('DELETE', ['defaultCollectionId']).catch(() => {});
+    defaultCollId = null;
+  }
   await cloud('DELETE', ['collections', id]);
   await refreshCollections();
   status('Collection deleted');
 });
 
-$('collLoadBtn').onclick = collAction(async () => {
-  const id = $('collSel').value;
+// Reusable collection loader with auto-fetch from library
+async function loadCollectionById(id, { promptClose = true } = {}) {
   if (!id) return;
   const c = await cloud('GET', ['collections', id]);
   if (!c) return refreshCollections();
   const items = Object.values(c.items || {}).sort((a, b) => a.order - b.order);
   const inColl = (sh) => items.some((it) => it.name === sh.name && it.page === sh.page);
   const others = sheets.filter((sh) => !inColl(sh));
-  if (others.length && confirm(`Close the ${others.length} open sheet(s) that are not in "${c.name}"?`)) {
+  if (others.length && promptClose && confirm(`Close the ${others.length} open sheet(s) that are not in "${c.name}"?`)) {
     others.forEach((sh) => removeSheet(sh));
   }
 
@@ -995,6 +1023,19 @@ $('collLoadBtn').onclick = collAction(async () => {
       const same = sheets.find((s) => s.name === it.name);
       if (same) sh = await addSheet(same.file, { page: it.page, visible: it.visible, quiet: true });
     }
+    // If not open locally, automatically download it from our Sheet Library!
+    if (!sh) {
+      const libIt = (window.LIBRARY_SOURCES || []).flatMap((s) => s.items || []).find((x) => x.name === it.name);
+      if (libIt) {
+        try {
+          status(`Loading ${it.name}…`);
+          const file = await libFile(libIt);
+          sh = await addSheet(file, { page: it.page, visible: it.visible, quiet: true });
+        } catch (e) {
+          console.error('Failed to auto-fetch library sheet:', it.name, e);
+        }
+      }
+    }
     if (sh) applyItem(sh, it);
     else missing.push(it);
   }
@@ -1003,6 +1044,25 @@ $('collLoadBtn').onclick = collAction(async () => {
   status(missing.length
     ? `Loaded ${items.length - missing.length} of ${items.length}. Pick the missing files below.`
     : `☁ Loaded collection "${c.name}"`);
+}
+
+$('collLoadBtn').onclick = collAction(async () => {
+  await loadCollectionById($('collSel').value, { promptClose: true });
+});
+
+$('collDefaultBtn').onclick = collAction(async () => {
+  const id = $('collSel').value;
+  if (!id) return;
+  if (defaultCollId === id) {
+    await cloud('DELETE', ['defaultCollectionId']);
+    defaultCollId = null;
+    status('Default collection cleared');
+  } else {
+    await cloud('PUT', ['defaultCollectionId'], id);
+    defaultCollId = id;
+    status(`★ "${collections[id].name}" set as default collection`);
+  }
+  renderCollections(id);
 });
 
 function applyItem(sh, it) {
