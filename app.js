@@ -470,12 +470,30 @@ capture.addEventListener('pointerup', endDrag);
 capture.addEventListener('pointercancel', endDrag);
 
 // Click without dragging: select the topmost sheet under the cursor (keep the current one if it's under there too)
+// Click without dragging: select the sheet under the cursor (cycles if sheets overlap)
 function selectAt(px, py) {
+  const allHits = sheets.filter((sh) => hitTest(sh, px, py));
+  if (!allHits.length) return;
   const cur = active();
-  if (cur && hitTest(cur, px, py)) return;
-  const hit = sheets.find((sh) => hitTest(sh, px, py));
-  if (hit) setActive(hit.id);
+  const curIdx = allHits.findIndex((sh) => sh.id === cur?.id);
+  const next = allHits[(curIdx + 1) % allHits.length];
+  if (next) setActive(next.id);
 }
+// Clicking a sheet on the map selects it and switches to Adjust mode for easy panning
+map.on('click', (e) => {
+  const { x: px, y: py } = e.containerPoint;
+  const allHits = sheets.filter((sh) => hitTest(sh, px, py));
+  if (allHits.length) {
+    const cur = active();
+    const curIdx = allHits.findIndex((sh) => sh.id === cur?.id);
+    const next = allHits[(curIdx + 1) % allHits.length];
+    if (next) {
+      setActive(next.id);
+      setMode('adjust');
+    }
+  }
+});
+
 
 capture.addEventListener('wheel', (e) => {
   e.preventDefault();
@@ -1182,9 +1200,21 @@ async function loadLibrary(force) {
   $('libRemoveSource').hidden = !src || src.builtin;
   lib.items = []; lib.error = null;
   if (!src) { lib.error = 'No sources. Use ＋ Source to add a GitHub release link.'; return renderLibList(); }
+  // If this source already provides direct items (from library-config.js):
+  if (src.items && Array.isArray(src.items)) {
+    lib.items = src.items;
+    renderLibList();
+    try {
+      lib.cloudKeys = new Set(Object.keys((await cloud('GET', ['sheets'], undefined, 'shallow=true')) || {}));
+      renderLibList();
+    } catch {}
+    return;
+  }
+
   const rel = parseRelease(src.release);
   if (!rel) { lib.error = `Not a GitHub release link: ${src.release}`; return renderLibList(); }
 
+  
   const cacheKey = 'ovl:lib:' + src.release;
   const cached = readJSON(cacheKey);
   if (!force && cached && Date.now() - cached.at < 3600e3) {
@@ -1234,7 +1264,7 @@ function renderLibList(loading) {
       <span class="nm"></span>
       ${lib.cloudKeys.has(fbKey(it.name)) ? '<span class="badge cl" title="Has saved cloud alignments">☁ aligned</span>' : ''}
       ${open ? '<span class="badge on">✓ on map</span>' : ''}
-      <span class="sz">${mb(it.size)}</span>`;
+      ${it.size ? `<span class="sz">${mb(it.size)}</span>` : ''}`
     li.querySelector('.nm').textContent = prettyName(it.name);
     const cb = li.querySelector('input');
     cb.onclick = (e) => {
@@ -1254,15 +1284,24 @@ function updateLibFoot() {
   for (const n of [...lib.selected]) if (isOpen(n)) lib.selected.delete(n);
   const total = lib.items.reduce((a, it) => a + it.size, 0);
   const onMap = lib.items.filter((it) => isOpen(it.name)).length;
-  $('libInfo').textContent = lib.items.length ? `${lib.items.length} sheets · ${mb(total)} · ${onMap} on map` : '';
+  $('libInfo').textContent = lib.items.length ? `${lib.items.length} sheets${total ? ` · ${mb(total)}` : ''} · ${onMap} on map` : '';
   $('libAddSel').disabled = !lib.selected.size;
   $('libAddSel').textContent = `＋ Add selected${lib.selected.size ? ` (${lib.selected.size})` : ''}`;
 }
 
 // Download through server.py (GitHub downloads have no CORS headers), with progress; keeps the last few in memory
 async function libFile(it, onProgress) {
+  
   if (lib.cache.has(it.name)) return lib.cache.get(it.name);
-  const r = await apiFetch('/api/fetch?url=' + encodeURIComponent(it.url));
+  let r;
+  try {
+    // Try downloading directly from GitHub first
+    r = await fetch(it.url);
+    if (!r.ok) throw new Error();
+  } catch {
+    // Fall back to server.py if direct download fails
+    r = await apiFetch('/api/fetch?url=' + encodeURIComponent(it.url));
+  }
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
   const total = Number(r.headers.get('Content-Length')) || it.size;
   const reader = r.body.getReader();
@@ -1289,7 +1328,7 @@ async function libPreview(it) {
   const pv = $('libPreview');
   const open = isOpen(it.name);
   pv.innerHTML = `<div class="pv-title"></div>
-    <div class="muted small pv-info">${mb(it.size)}</div>
+    <div class="muted small pv-info">${it.size ? mb(it.size) : ''}</div>
     <div class="pv-img"><span class="muted pv-progress">Downloading…</span></div>
     <div class="btns">
       <button class="pv-open" ${open ? '' : 'hidden'}>Show on map</button>
@@ -1320,12 +1359,31 @@ async function libPreview(it) {
       if (lib.previewName === it.name) pv.querySelector('.pv-img').replaceChildren(c);
     } else {
       const img = new Image();
-      img.src = URL.createObjectURL(file);
-      await img.decode();
-      if (lib.previewName !== it.name) return URL.revokeObjectURL(img.src);
-      pv.querySelector('.pv-info').textContent = `Image · ${img.naturalWidth}×${img.naturalHeight}px · ${mb(it.size)}`;
-      pv.querySelector('.pv-img').replaceChildren(img);
-      setTimeout(() => URL.revokeObjectURL(img.src), 1000);
+      const objUrl = URL.createObjectURL(file); // Create the local URL
+      
+      // Tell the image what to do ONCE it finishes loading
+      img.onload = () => {
+        // Clean up memory only AFTER it safely loads on screen
+        URL.revokeObjectURL(objUrl); 
+        
+        if (lib.previewName !== it.name) return; // Stop if user clicked a different file
+        
+        pv.querySelector('.pv-info').textContent = `Image · ${img.naturalWidth}×${img.naturalHeight}px · ${mb(it.size)}`;
+        pv.querySelector('.pv-img').replaceChildren(img);
+        pv.querySelector('.pv-add').disabled = false;
+      };
+
+      // Tell the image what to do if the data is broken/blocked by GitHub
+      img.onerror = () => {
+        URL.revokeObjectURL(objUrl);
+        if (lib.previewName === it.name) {
+          // If this triggers, your libFile() is failing to get the real image bytes (likely CORS)
+          pv.querySelector('.pv-img').innerHTML = `<span class="muted" style="color:red;">Error: File downloaded, but it is not a valid image. (Check CORS/GitHub links)</span>`;
+        }
+      };
+
+      // Trigger the load
+      img.src = objUrl;
     }
     pv.querySelector('.pv-add').disabled = false;
   } catch (err) {
@@ -1543,9 +1601,9 @@ $('collapseBtn').onclick = () => {
   $('collapseBtn').textContent = c ? '+' : '–';
 };
 
-if (location.protocol === 'file:') {
-  $('fileBanner').hidden = false;
-}
+// if (location.protocol === 'file:') {
+//   $('fileBanner').hidden = false;
+// }
 
 setMode('locked');
 renderList();
